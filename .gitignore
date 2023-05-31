@@ -4,6 +4,10 @@ __pycache__/
 *$py.class
 
 adni_png/
+*.prof
+*.nvvp
+*.pickle
+.vscode/
 
 # C extensions
 *.so
