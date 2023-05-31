@@ -1,4 +1,5 @@
 import math
+import time
 import sys
 import pickle
 import cupy as cp
@@ -69,6 +70,7 @@ print("Blocks per grid: {}".format(blocks_per_grid))
 
 C_gpu = cp.zeros((u_gpu.shape[0], vt_gpu.shape[1]), dtype=cp.float32)
 
+start = time.perf_counter()
 reconstruct_svd_numba_shared_memory[blocks_per_grid, threads_per_block](u_gpu, s_gpu, vt_gpu, C_gpu, k)
 
-print("Done!")
+print(f"Done in {time.perf_counter() - start} seconds!")
