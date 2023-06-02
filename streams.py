@@ -131,9 +131,11 @@ if NUM_STREAMS != "serial":
         blocks_per_grid_y = math.ceil(C_gpu.shape[1] / threads_per_block[1])
         blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
         reconstruct_svd_numba_shared_memory[blocks_per_grid, threads_per_block, stream](u_gpu, s_gpu, vt_gpu, C_gpu, k)
+        # 
+        with cuda.pinned():
+            C = np.empty_like(C_gpu)
+            C_gpu.copy_to_host(C, stream=stream)
         """
-        C = cuda.pinned_array_like(C_gpu)
-        C_gpu.copy_to_host(stream=stream)
         """
 
 
