@@ -1,7 +1,5 @@
-# load all images inside the subdirectories of the adni_png folder and store the decompositions in a dictionary
 import os
 import sys
-import time
 from numba import cuda, float32
 import math
 import cupy as cp
@@ -118,32 +116,66 @@ if NUM_STREAMS != "serial":
     events = [cuda.event() for _ in range(len(streams))]
 
 
-    def reconstruct_one_decomposition(adni_decopositions, threads_per_block, stream):
-        decomp = adni_decopositions.get()
+    def allocate_buffers(ndarray, streams):
+        shape, dtype = ndarray.shape, ndarray.dtype
+        def allocate_buffer(stream):
+            return cuda.device_array(shape, dtype=dtype, stream=stream)
+        return ([allocate_buffer(stream) for stream in streams], [allocate_buffer(stream) for stream in streams])
 
-        u_gpu = cuda.to_device(decomp['u'], stream=stream)
-        s_gpu = cuda.to_device(decomp['s'], stream=stream)
-        vt_gpu = cuda.to_device(decomp['vt'], stream=stream)
-        C_gpu = cuda.device_array((u_gpu.shape[0], vt_gpu.shape[1]), dtype=np.float32, stream=stream)
-        k = min(u_gpu.shape[1], vt_gpu.shape[0])
+    decomp = adni_decopositions.queue[0]
+    gpu_u_buffers = allocate_buffers(decomp['u'], streams)
+    gpu_s_buffers = allocate_buffers(decomp['s'], streams)
+    gpu_vt_buffers = allocate_buffers(decomp['vt'], streams)
+    gpu_C_buffers = allocate_buffers(np.zeros((decomp['u'].shape[0], decomp['vt'].shape[1]), dtype=np.float32), streams)
 
-        blocks_per_grid_x = math.ceil(C_gpu.shape[0] / threads_per_block[0])
-        blocks_per_grid_y = math.ceil(C_gpu.shape[1] / threads_per_block[1])
+
+    # create a datastructure to remember which stream is currently accessing which buffer
+    # this is needed to make sure that the buffer is not overwritten while it is still in use
+    buffer_idx_in_use = [0 for _ in range(len(streams))]
+
+    def reconstruct_one_decomposition(decomp, gpu_u_buffer, gpu_s_buffer, gpu_vt_buffer, gpu_C_buffer, threads_per_block, stream):
+        gpu_u_buffer.copy_to_device(decomp['u'], stream=stream)
+        gpu_s_buffer.copy_to_device(decomp['s'], stream=stream)
+        gpu_vt_buffer.copy_to_device(decomp['vt'], stream=stream)
+        
+        # fill the C buffer with zeros
+        # gpu_C_buffer[:, :] = 0.0
+        k = min(gpu_u_buffer.shape[1], gpu_vt_buffer.shape[0])
+
+        blocks_per_grid_x = math.ceil(gpu_C_buffer.shape[0] / threads_per_block[0])
+        blocks_per_grid_y = math.ceil(gpu_C_buffer.shape[1] / threads_per_block[1])
         blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
-        reconstruct_svd_numba_shared_memory[blocks_per_grid, threads_per_block, stream](u_gpu, s_gpu, vt_gpu, C_gpu, k)
-        # 
-        with cuda.pinned():
-            C = np.empty_like(C_gpu)
-            C_gpu.copy_to_host(C, stream=stream)
+        reconstruct_svd_numba_shared_memory[blocks_per_grid, threads_per_block, stream](gpu_u_buffer, gpu_s_buffer, gpu_vt_buffer, gpu_C_buffer, k)
         """
+        C = cuda.pinned_array_like(gpu_C_buffer)
+        gpu_C_buffer.copy_to_host(C, stream=stream)
         """
+
+
+
 
 
     # initialize streams
     for i, (event, stream) in enumerate(zip(events, streams)):
-        reconstruct_one_decomposition(adni_decopositions, threads_per_block, stream)
+        buf_idx = buffer_idx_in_use[i]
+        reconstruct_one_decomposition(adni_decopositions.get(),
+                                    gpu_u_buffers[buf_idx][i],
+                                    gpu_s_buffers[buf_idx][i],
+                                    gpu_vt_buffers[buf_idx][i],
+                                    gpu_C_buffers[buf_idx][i],
+                                    threads_per_block, stream)
+        buffer_idx_in_use[i] = (buf_idx + 1) % 2
         event.record(stream=stream)
-        reconstruct_one_decomposition(adni_decopositions, threads_per_block, stream)
+
+        buf_idx = buffer_idx_in_use[i]
+        reconstruct_one_decomposition(adni_decopositions.get(),
+                                    gpu_u_buffers[buf_idx][i],
+                                    gpu_s_buffers[buf_idx][i],
+                                    gpu_vt_buffers[buf_idx][i],
+                                    gpu_C_buffers[buf_idx][i],
+                                    threads_per_block,
+                                    stream)
+        buffer_idx_in_use[i] = (buf_idx + 1) % 2
     print("Initialized all streams")
 
 
@@ -152,8 +184,16 @@ if NUM_STREAMS != "serial":
             # query events[i] if it has been recorded
             if event.query() and not adni_decopositions.empty():
                 event.record(stream=stream)
-                reconstruct_one_decomposition(adni_decopositions, threads_per_block, stream)
-        print(f"Decompositions left: {adni_decopositions.qsize()}")
+                buf_idx = buffer_idx_in_use[i]
+                reconstruct_one_decomposition(adni_decopositions.get(),
+                                            gpu_u_buffers[buf_idx][i],
+                                            gpu_s_buffers[buf_idx][i],
+                                            gpu_vt_buffers[buf_idx][i],
+                                            gpu_C_buffers[buf_idx][i],
+                                            threads_per_block,
+                                            stream)
+                buffer_idx_in_use[i] = (buf_idx + 1) % 2
+                print(f"Decompositions left: {adni_decopositions.qsize()}")
     print("All decompositions have been reconstructed")
 
 
