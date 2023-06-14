@@ -19,3 +19,11 @@ den gratis Service von [Google CoLab](colab.research.google.com/).
 * In Aufgabe 6 wendest du nach eigenem Gutdünken die gelernten Konzepte für mehrere Bilder an
 * Die Aufgabe 7 entsprechen der Interpretation und Reflexion der Mini-Challenge
 * Alle Abgaben dürfen bis zur finalen Abgabe noch angepasst werden
+
+# CUDA profiling
+according to this: https://gist.github.com/sonots/5abc0bccec2010ac69ff74788b265086
+```
+nvprof -o prof-%p.nvvp --profile-child-processes python .\test.py
+
+nvvp .\prof-34668.nvvp
+```

@@ -3,6 +3,12 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+adni_png/
+*.prof
+*.nvvp
+*.pickle
+.vscode/
+
 # C extensions
 *.so
 
